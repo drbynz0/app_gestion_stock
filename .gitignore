@@ -2,3 +2,6 @@
 /frontend
 /frontend/cti_app_dj/__pycache__/
 /.idea
+/backend/.venv/
+../../__pycache__/
+backend/users/__pycache__/
