@@ -1,0 +1,213 @@
+Modèle : User
+  Table : users_user
+    - id (BigAutoField)
+    - password (CharField)
+    - last_login (DateTimeField)
+    - is_superuser (BooleanField)
+    - username (CharField)
+    - first_name (CharField)
+    - last_name (CharField)
+    - email (CharField)
+    - is_staff (BooleanField)
+    - is_active (BooleanField)
+    - date_joined (DateTimeField)
+    - user_type (CharField)
+    - phone (CharField)
+    - token (CharField)
+
+Modèle : Category
+  Table : products_category
+    - id (BigAutoField)
+    - name (CharField)
+    - description (TextField)
+    - created_at (DateTimeField)
+    - updated_at (DateTimeField)
+
+Modèle : Product
+  Table : products_product
+    - id (BigAutoField)
+    - name (CharField)
+    - variants (IntegerField)
+    - marque (CharField)
+    - code (CharField)
+    - category (ForeignKey)
+    - stock (IntegerField)
+    - available (BooleanField)
+    - price (DecimalField)
+    - promo_price (DecimalField)
+    - description (TextField)
+    - on_promo (BooleanField)
+    - created_at (DateTimeField)
+    - updated_at (DateTimeField)
+
+Modèle : ProductImage
+  Table : products_productimage
+    - id (BigAutoField)
+    - product (ForeignKey)
+    - image (FileField)
+    - is_main (BooleanField)
+    - created_at (DateTimeField)
+
+Modèle : InternalOrder
+  Table : internalorders_internalorder
+    - id (BigAutoField)
+    - order_num (CharField)
+    - client_id (IntegerField)
+    - client_name (CharField)
+    - type (CharField)
+    - date (DateTimeField)
+    - payment_method (CharField)
+    - total_price (DecimalField)
+    - total_paid (DecimalField)
+    - remaining_price (DecimalField)
+    - status (CharField)
+    - description (TextField)
+    - created_at (DateTimeField)
+    - updated_at (DateTimeField)
+
+Modèle : OrderItem
+  Table : internalorders_orderitem
+    - id (BigAutoField)
+    - order (ForeignKey)
+    - product (ForeignKey)
+    - product_ref (CharField)
+    - product_name (CharField)
+    - product_image (CharField)
+    - quantity (IntegerField)
+    - price (DecimalField)
+
+Modèle : Payment
+  Table : internalorders_payment
+    - id (BigAutoField)
+    - order (ForeignKey)
+    - amount (DecimalField)
+    - payment_method (CharField)
+    - date (DateTimeField)
+    - description (TextField)
+
+Modèle : ExternalOrder
+  Table : externalOrders_externalorder
+    - id (BigAutoField)
+    - order_num (CharField)
+    - supplier_id (IntegerField)
+    - supplier_name (CharField)
+    - date (DateTimeField)
+    - payment_method (CharField)
+    - total_price (DecimalField)
+    - total_paid (DecimalField)
+    - remaining_price (DecimalField)
+    - status (CharField)
+    - description (TextField)
+    - created_at (DateTimeField)
+    - updated_at (DateTimeField)
+
+Modèle : OrderItem
+  Table : externalorders_orderitem
+    - id (BigAutoField)
+    - order (ForeignKey)
+    - product (ForeignKey)
+    - product_ref (CharField)
+    - product_name (CharField)
+    - product_image (CharField)
+    - quantity (IntegerField)
+    - price (DecimalField)
+
+Modèle : Customer
+  Table : customers_customer
+    - id (BigAutoField)
+    - name (CharField)
+    - email (CharField)
+    - phone_number (CharField)
+    - address (TextField)
+    - ice (CharField)
+    - is_company (BooleanField)
+    - customer_type (CharField)
+    - created_at (DateTimeField)
+    - updated_at (DateTimeField)
+
+Modèle : FactureClient
+  Table : factures_factureclient
+    - id (BigAutoField)
+    - ref (CharField)
+    - order_num (CharField)
+    - client_id (IntegerField)
+    - client_name (CharField)
+    - amount (FloatField)
+    - date (CharField)
+    - description (TextField)
+    - is_internal (BooleanField)
+    - is_paid (BooleanField)
+
+Modèle : FactureFournisseur
+  Table : factures_facturefournisseur
+    - id (BigAutoField)
+    - ref (CharField)
+    - order_num (CharField)
+    - supplier_id (IntegerField)
+    - supplier_name (CharField)
+    - amount (FloatField)
+    - date (CharField)
+    - description (TextField)
+    - is_internal (BooleanField)
+    - is_paid (BooleanField)
+
+Modèle : Discount
+  Table : discounts_discount
+    - id (BigAutoField)
+    - title (CharField)
+    - date_debut (DateField)
+    - date_fin (DateField)
+    - validity (CharField)
+    - product_id (BigIntegerField)
+    - product_name (CharField)
+    - product_category (IntegerField)
+    - images (CharField)
+    - normal_price (FloatField)
+    - promotion_price (FloatField)
+    - description (TextField)
+
+Modèle : Activity
+  Table : activities_activity
+    - id (BigAutoField)
+    - description (CharField)
+    - icon_name (CharField)
+    - timestamp (DateTimeField)
+
+Modèle : Supplier
+  Table : suppliers_supplier
+    - id (BigAutoField)
+    - ice (CharField)
+    - name_respo (CharField)
+    - name_ent (CharField)
+    - email (CharField)
+    - phone (CharField)
+    - address (CharField)
+
+Modèle : DeliveryNote
+  Table : delivery_notes_deliverynote
+    - id (BigAutoField)
+    - note_number (CharField)
+    - date (DateTimeField)
+    - client_id (IntegerField)
+    - client_name (CharField)
+    - client_address (TextField)
+    - prepared_by (CharField)
+    - comments (TextField)
+    - order_num (CharField)
+
+Modèle : DeliveryItem
+  Table : delivery_notes_deliveryitem
+    - id (BigAutoField)
+    - delivery_note (ForeignKey)
+    - product_code (CharField)
+    - description (TextField)
+    - quantity (PositiveIntegerField)
+    - unit_price (FloatField)
+
+Modèle : Historical
+  Table : historical_historical
+    - id (BigAutoField)
+    - description (TextField)
+    - icon (CharField)
+    - timestamp (DateTimeField)
+

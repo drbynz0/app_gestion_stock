@@ -1,0 +1,140 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nos Produits - TechShop</title>
+    <link rel="stylesheet" href="{% static 'assets/css/products.css' %}">
+    <link rel="stylesheet" href="{% static 'assets/css/style.css' %}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Barre de navigation -->
+    <header>
+        <div class="container">
+            <div class="logo">
+                <h1>Tech<span>Shop</span></h1>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="/">Accueil</a></li>
+                    <li><a href="/products/" class="active">Produits</a></li>
+                    <li><a href="/promotions/">Promotions</a></li>
+                    <li><a href="#">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="cart-icon">
+                <i class="fas fa-shopping-cart"></i>
+                <span class="cart-count">0</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Bannière de la page produit -->
+    <section class="page-banner">
+        <div class="container">
+            <h2>Nos Produits</h2>
+            <p>Découvrez notre sélection exclusive</p>
+        </div>
+    </section>
+
+    <!-- Filtres et tri -->
+    <section class="product-filters">
+        <div class="container">
+            <div class="filter-container">
+                <div class="filter-group">
+                    <label for="category">Catégorie :</label>
+                    <select id="category">
+                        <option value="all">Toutes les catégories</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="sort">Trier par :</label>
+                    <select id="sort">
+                        <option value="popular">Populaire</option>
+                        <option value="newest">Nouveautés</option>
+                        <option value="price-low">Prix croissant</option>
+                        <option value="price-high">Prix décroissant</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="price-range">Prix :</label>
+                    <input type="range" id="price-range" min="0" max="1000" value="1000">
+                    <span id="price-value">Jusqu'à €1000</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Liste des produits -->
+    <section class="product-listing">
+        <div class="container">
+            <div class="product-grid">
+                
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination">
+                <a href="#" class="page-nav disabled"><i class="fas fa-chevron-left"></i></a>
+                <a href="#" class="page-number active">1</a>
+                <a href="#" class="page-number">2</a>
+                <a href="#" class="page-number">3</a>
+                <a href="#" class="page-nav"><i class="fas fa-chevron-right"></i></a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-container">
+            <div class="footer-column">
+                <h3>À propos</h3>
+                <ul class="footer-links">
+                    <li><a href="#">Notre histoire</a></li>
+                    <li><a href="#">Nos valeurs</a></li>
+                    <li><a href="#">Carrières</a></li>
+                    <li><a href="#">Presse</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3>Service Client</h3>
+                <ul class="footer-links">
+                    <li><a href="#">Contactez-nous</a></li>
+                    <li><a href="#">FAQ</a></li>
+                    <li><a href="#">Livraison & Retours</a></li>
+                    <li><a href="#">Guide des tailles</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3>Informations Légales</h3>
+                <ul class="footer-links">
+                    <li><a href="#">Conditions Générales</a></li>
+                    <li><a href="#">Politique de confidentialité</a></li>
+                    <li><a href="#">Cookies</a></li>
+                    <li><a href="#">Mentions légales</a></li>
+                </ul>
+            </div>e
+            
+            <div class="footer-column">
+                <h3>Suivez-nous</h3>
+                <ul class="footer-links">
+                    <li><a href="#"><i class="fab fa-instagram"></i> Instagram</a></li>
+                    <li><a href="#"><i class="fab fa-facebook"></i> Facebook</a></li>
+                    <li><a href="#"><i class="fab fa-pinterest"></i> Pinterest</a></li>
+                    <li><a href="#"><i class="fab fa-twitter"></i> Twitter</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="copyright">
+            <p>© {% now "Y" %} TechShop. Tous droits réservés.</p>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="{% static 'assets/js/script.js' %}"></script>
+    <script type="module" src="{% static 'assets/services/products_service.js' %}"></script>
+</body>
+</html>

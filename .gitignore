@@ -1,0 +1,4 @@
+/backend/var.env
+/frontend
+/frontend/cti_app_dj/__pycache__/
+/.idea

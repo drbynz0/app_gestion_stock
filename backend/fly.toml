@@ -1,0 +1,15 @@
+app = "cti_app_dj"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+DJANGO_SETTINGS_MODULE = "cti_app_dj.settings"
+PYTHONUNBUFFERED = "1"
+
+[experimental]
+auto_rollback = true
+
+[http_service]
+internal_port = 8080
+force_https = true
