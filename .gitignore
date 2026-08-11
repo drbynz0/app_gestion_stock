@@ -1,6 +1,8 @@
 /backend/var.env
+/frontend_
 /frontend
-/frontend/cti_app_dj/__pycache__/
+/AppGestionStock
+/frontend_/cti_app_dj/__pycache__/
 /.idea
 /backend/.venv/
 ../../__pycache__/
