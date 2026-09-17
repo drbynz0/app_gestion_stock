@@ -1,6 +1,8 @@
 from django.db import models # type: ignore
+from users.models import Company
 
 class DeliveryNote(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='delivery_notes', editable=False)
     note_number = models.CharField(max_length=100, unique=True)
     date = models.DateTimeField()
     client_id = models.IntegerField(null=True, blank=True)

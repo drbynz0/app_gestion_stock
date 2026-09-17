@@ -1,130 +1,126 @@
-from email.quoprimime import unquote
-import json
-from rest_framework import generics, status # type: ignore
-from rest_framework.response import Response # type: ignore
+from django.db import transaction
+from django.db.models import Q
+from django.db.transaction import on_commit
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import APIException, ValidationError
+
 from .models import Product, Category, ProductImage
+from .permissions import HasCategoryPermission, HasProductPermission
 from .serializers import ProductSerializer, ProductCreateUpdateSerializer, CategorySerializer
-from django.shortcuts import get_object_or_404 # type: ignore
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser # type: ignore
-from django.core.files.storage import default_storage # type: ignore
+from .storage import delete_product_image, upload_product_image
 
-class CategoryListView(generics.ListAPIView):
+
+class CompanyQuerysetMixin:
+    """Ensures an object can only ever be read inside the caller's company."""
+    def get_queryset(self):
+        if self.request.user.user_type == 'PLATFORM_ADMIN' or self.request.user.is_superuser:
+            return super().get_queryset()
+        return super().get_queryset().filter(company=self.request.user.company)
+
+
+class CategoryListView(CompanyQuerysetMixin, generics.ListCreateAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [HasCategoryPermission]
 
-class CategoryDetailView(generics.RetrieveAPIView):
+    def perform_create(self, serializer):
+        serializer.save(company=self.request.user.company)
+
+
+class CategoryDetailView(CompanyQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [HasCategoryPermission]
 
-class CategoryCreateView(generics.CreateAPIView):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
 
-class CategoryUpdateView(generics.UpdateAPIView):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
+# Compatibility endpoint retained for the existing mobile client.
+CategoryCreateView = CategoryListView
+CategoryUpdateView = CategoryDetailView
+CategoryDeleteView = CategoryDetailView
 
-class CategoryDeleteView(generics.DestroyAPIView):
-    queryset = Category.objects.all()
-    serializer_class = CategorySerializer
 
-class ProductListView(generics.ListAPIView):
-    """Endpoint pour récupérer tous les produits (GET)"""
-    queryset = Product.objects.all()
+class ProductListView(CompanyQuerysetMixin, generics.ListAPIView):
+    queryset = Product.objects.select_related('category').prefetch_related('images')
     serializer_class = ProductSerializer
+    permission_classes = [HasProductPermission]
 
-class ProductDetailView(generics.RetrieveAPIView):
-    """Endpoint pour récupérer un produit spécifique (GET)"""
-    queryset = Product.objects.all()
+
+class ProductDetailView(CompanyQuerysetMixin, generics.RetrieveAPIView):
+    queryset = Product.objects.select_related('category').prefetch_related('images')
     serializer_class = ProductSerializer
+    permission_classes = [HasProductPermission]
+
 
 class ProductCreateView(generics.CreateAPIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     serializer_class = ProductCreateUpdateSerializer
+    permission_classes = [HasProductPermission]
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
-        try:
-            # Créer le produit
-            data = request.data.dict()
-            
-            # Gérer les images séparément
-            images = request.FILES.getlist('images')
-            
-            # Valider les données
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            
-            product = serializer.save()
+        product = serializer.save(company=request.user.company)
+        self._store_images(request, product)
+        return Response(ProductSerializer(product, context=self.get_serializer_context()).data, status=status.HTTP_201_CREATED)
 
-            for image in images:
-                # Sauvegarder l'image et obtenir le chemin relatif
-                path = default_storage.save(f'products/{image.name}', image)
-                ProductImage.objects.create(product=product, image=path)
-                
-            return Response(
-                ProductSerializer(product).data,
-                status=status.HTTP_201_CREATED
-            )
-        except Exception as e:
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    @staticmethod
+    def _store_images(request, product):
+        for index, image in enumerate(request.FILES.getlist('images')):
+            try:
+                url, storage_path = upload_product_image(
+                    file=image, company_id=product.company_id, product_id=product.id
+                )
+            except ValueError as exc:
+                raise ValidationError({'images': [str(exc)]}) from exc
+            except RuntimeError as exc:
+                error = APIException("Le stockage des images est temporairement indisponible.")
+                error.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+                raise error from exc
+            ProductImage.objects.create(product=product, url=url, storage_path=storage_path, is_main=index == 0)
 
-class ProductUpdateView(generics.UpdateAPIView):
+
+class ProductUpdateView(CompanyQuerysetMixin, generics.UpdateAPIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     queryset = Product.objects.all()
     serializer_class = ProductCreateUpdateSerializer
+    permission_classes = [HasProductPermission]
 
+    @transaction.atomic
     def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        
-        # 1. Traitement des données standard
-        serializer = self.get_serializer(
-            instance, 
-            data=request.data, 
-            partial=partial
-        )
+        product = self.get_object()
+        serializer = self.get_serializer(product, data=request.data, partial=kwargs.pop('partial', False))
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
-        
-        # 2. Gestion des images (si fournies)
-        if 'images' in request.FILES:
-            # Supprimer les anciennes images
-            instance.images.all().delete()
-            
-            # Ajouter les nouvelles images
-            for image in request.FILES.getlist('images'):
-                path = default_storage.save(f'products/{image.name}', image)
-                ProductImage.objects.create(product=instance, image=path)
-        
-        # 3. Retourner l'objet complet avec ses images
-        updated_product = Product.objects.get(pk=instance.id)
-        full_serializer = ProductSerializer(updated_product)
-        
-        return Response(full_serializer.data)
 
-class ProductDeleteView(generics.DestroyAPIView):
-    """Endpoint pour supprimer un produit (DELETE)"""
+        if 'images' in request.FILES:
+            stale_paths = list(product.images.exclude(storage_path__isnull=True).values_list('storage_path', flat=True))
+            product.images.all().delete()
+            ProductCreateView._store_images(request, product)
+            on_commit(lambda: [delete_product_image(path) for path in stale_paths])
+        return Response(ProductSerializer(product, context=self.get_serializer_context()).data)
+
+
+class ProductDeleteView(CompanyQuerysetMixin, generics.DestroyAPIView):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
+    permission_classes = [HasProductPermission]
 
-class ProductSearchView(generics.ListAPIView):
-    """Endpoint pour rechercher des produits (GET)"""
-    serializer_class = ProductSerializer
-    
+    def perform_destroy(self, instance):
+        stale_paths = list(instance.images.exclude(storage_path__isnull=True).values_list('storage_path', flat=True))
+        instance.delete()
+        on_commit(lambda: [delete_product_image(path) for path in stale_paths])
+
+
+class ProductSearchView(ProductListView):
     def get_queryset(self):
-        queryset = Product.objects.all()
-        name = self.request.query_params.get('name', None)
-        category = self.request.query_params.get('category', None)
-        
+        queryset = super().get_queryset()
+        name = self.request.query_params.get('name')
+        category = self.request.query_params.get('category')
         if name:
-            queryset = queryset.filter(name__icontains=name)
+            queryset = queryset.filter(Q(name__icontains=name) | Q(code__icontains=name))
         if category:
             queryset = queryset.filter(category__name__icontains=category)
-            
         return queryset

@@ -1,6 +1,7 @@
-from django.urls import path # type: ignore
-from .views import ask_ai
+from django.urls import path
+
+from .views import AssistantChatView
 
 urlpatterns = [
-    path('ask-ai/', ask_ai, name='ask_ai'),
+    path('assistant/chat/', AssistantChatView.as_view(), name='assistant_chat'),
 ]

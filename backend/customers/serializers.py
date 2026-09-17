@@ -7,7 +7,8 @@ class CustomerSerializer(serializers.ModelSerializer):
         fields = '__all__'
         extra_kwargs = {
             'email': {'required': True},
-            'phone_number': {'required': True}
+            'phone_number': {'required': True},
+            'company': {'read_only': True},
         }
 
     def validate_ice(self, value):

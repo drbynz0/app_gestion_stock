@@ -1,6 +1,8 @@
 from django.db import models # type: ignore
+from users.models import Company
 
 class FactureClient(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='client_invoices', editable=False)
     ref = models.CharField(max_length=255)
     order_num = models.CharField(max_length=100)
     client_id = models.IntegerField()
@@ -16,6 +18,7 @@ class FactureClient(models.Model):
 
 
 class FactureFournisseur(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='supplier_invoices', editable=False)
     ref = models.CharField(max_length=50)
     order_num = models.CharField(max_length=100) 
     supplier_id = models.IntegerField()

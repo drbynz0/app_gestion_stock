@@ -50,7 +50,7 @@ class InternalOrderSerializer(serializers.ModelSerializer):
             OrderItem.objects.create(order=order, **item_data)
         if payments_data is not None:
             for payment_data in payments_data:
-                PaymentSerializer.create(PaymentSerializer(), validated_data=payment_data)
+                Payment.objects.create(order=order, **payment_data)
         return order
     
     def update(self, instance, validated_data):
@@ -74,6 +74,6 @@ class InternalOrderSerializer(serializers.ModelSerializer):
 
             # Créer les nouveaux paiements
             for payment_data in payments_data:
-                PaymentSerializer.create(PaymentSerializer(), validated_data=payment_data)
+                Payment.objects.create(order=instance, **payment_data)
 
         return instance

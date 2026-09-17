@@ -1,129 +1,154 @@
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.conf import settings
-import json
-import httpx
-import psycopg2
-import re
+"""Assistant Groq en lecture seule et isolé par entreprise."""
 import logging
-from tenacity import retry, stop_after_attempt, wait_exponential
-from pathlib import Path
+from decimal import Decimal
 
+import httpx
+from django.conf import settings
+from django.db.models import Count, Sum
+from django.utils import timezone
+from rest_framework import serializers, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from customers.models import Customer
+from discounts.models import Discount
+from externalOrders.models import ExternalOrder
+from internalOrders.models import InternalOrder
+from products.models import Product
+from stock.models import InventorySession
+from suppliers.models import Supplier
+from users.models import Company
 logger = logging.getLogger(__name__)
+MAX_HISTORY = 8
+DEFAULT_GROQ_MODEL = 'qwen/qwen3.8-27b'
 
-# Configuration base de données PostgreSQL
-DB_CONFIG = {
-    'dbname': settings.DATABASES['default']['NAME'],
-    'user': settings.DATABASES['default']['USER'],
-    'password': settings.DATABASES['default']['PASSWORD'],
-    'host': settings.DATABASES['default']['HOST'],
-    'port': settings.DATABASES['default']['PORT'],
-}
 
-# Charger la structure de la BDD pour contextualiser l'IA
-STRUCTURE_FILE = Path(settings.BASE_DIR) / "structure_bdd.txt"
-with open(STRUCTURE_FILE, "r", encoding="utf-8") as f:
-    BDD_STRUCTURE = f.read()
+def get_groq_model_name():
+    return getattr(settings, 'GROQ_MODEL', DEFAULT_GROQ_MODEL) or DEFAULT_GROQ_MODEL
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-async def call_ai_api(client, question):
-    """Appelle le modèle LLM (Groq ou autre) avec un prompt structuré"""
-    system_prompt = (
-        f"Tu es CTI Assistant, un expert en gestion commerciale, stock, vente et informatique. "
-        f"Tu aides un gérant d’entreprise à obtenir des réponses claires et simples. "
-        f"Voici la structure de sa base de données PostgreSQL :\n\n{BDD_STRUCTURE}\n\n"
-        f"Ta tâche : répondre de manière claire et directe à ses questions. "
-        f"Si c’est une question sur les données, attend que le système execute automatiquement une requête à la base de donnée selon la question demandée, puis tu le donne le résultats de la requête avec une reformulation claire et simple. "
-        f"Exemple de réponse idéale :\n\n"
-        f"Voici la liste des noms des clients :\n\n"
-        f"```sql\n"
-        f"SELECT name FROM customers_customer\n"
-        f"```\n\n"
-        f"Cette requête retourne (nombre) clients. Pour obtenir plus d'informations comme "
-        f"l'email ou le téléphone, vous pouvez modifier la requête.\n\n"
-        f"Si la requête retourne null , vous pouvez répondre par exemple : \n\n"
-        f"Aucune donnée n'est disponible pour cette question.\n\n"
-        f"N'utilise que des requêtes SELECT. Tu peux aussi répondre à des questions générales sur la vente, le commerce, la gestion, ou l'informatique."
-    )
 
-    payload = {
-        "model": "llama3-70b-8192",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ],
-        "temperature": 0.2,
-        "max_tokens": 1000
+def money(value):
+    return str(value or Decimal('0'))
+
+
+def company_snapshot(company):
+    """Aperçu métier limité, sans PII ni accès SQL généré par le LLM."""
+    products = Product.objects.filter(company=company)
+    orders = InternalOrder.objects.filter(company=company)
+    purchases = ExternalOrder.objects.filter(company=company)
+    low_stock = list(products.filter(stock__lte=5).order_by('stock', 'name').values('name', 'code', 'stock')[:8])
+    recent_products = list(products.order_by('-created_at').values_list('name', flat=True)[:6])
+    stock_value = sum((p.price or 0) * p.stock for p in products.only('price', 'stock'))
+    return {
+        'entreprise': company.name,
+        'devise': company.currency,
+        'indicateurs': {
+            'produits': products.count(),
+            'unites_en_stock': products.aggregate(total=Sum('stock'))['total'] or 0,
+            'valeur_stock_estimee': money(stock_value),
+            'clients': Customer.objects.filter(company=company).count(),
+            'fournisseurs': Supplier.objects.filter(company=company).count(),
+            'promotions_actives': Discount.objects.filter(company=company, validity='active').count(),
+            'inventaires_en_cours': InventorySession.objects.filter(company=company, status__in=['DRAFT', 'COUNTING']).count(),
+            'ventes': orders.count(),
+            'chiffre_affaires_commandes': money(orders.aggregate(total=Sum('total_price'))['total']),
+            'encaisse': money(orders.aggregate(total=Sum('total_paid'))['total']),
+            'reste_a_encaisser': money(orders.aggregate(total=Sum('remaining_price'))['total']),
+            'achats_fournisseurs': money(purchases.aggregate(total=Sum('total_price'))['total']),
+            'reste_a_payer_fournisseurs': money(purchases.aggregate(total=Sum('remaining_price'))['total']),
+        },
+        'alertes_stock_faible': low_stock,
+        'nouveaux_produits': recent_products,
+        'genere_le': timezone.now().isoformat(),
     }
 
-    response = await client.post(
-        settings.GROQ_API_URL,
-        headers={
-            "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-            "Content-Type": "application/json"
+
+def platform_snapshot():
+    return {
+        'portefeuille_plateforme': {
+            'entreprises': Company.objects.count(),
+            'entreprises_actives': Company.objects.filter(is_active=True).count(),
+            'utilisateurs': Company.objects.aggregate(total=Count('users'))['total'] or 0,
         },
-        json=payload,
-        timeout=30.0
+        'entreprises': [company_snapshot(company) for company in Company.objects.order_by('name')[:30]],
+    }
+
+
+class ChatInputSerializer(serializers.Serializer):
+    question = serializers.CharField(max_length=1200, trim_whitespace=True)
+    company_id = serializers.IntegerField(required=False, min_value=1, allow_null=True)
+    history = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_empty=True,
+        max_length=MAX_HISTORY,
     )
-    response.raise_for_status()
-    return response.json()
 
-def extract_sql_and_explanation(content):
-    """Extrait la partie explication + SQL"""
-    sql_match = re.search(r"```sql\s*(.*?)```", content, re.DOTALL)
-    sql = sql_match.group(1).strip() if sql_match else None
-    explanation = re.split(r"```sql\s*.*?```", content, flags=re.DOTALL)[0].strip()
-    return explanation, sql
+    def validate_question(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('Votre question ne peut pas être vide.')
+        return value.strip()
 
-def execute_sql(sql):
-    """Exécute une requête SELECT sur la base PostgreSQL"""
-    if not sql.strip().lower().startswith("select"):
-        raise ValueError("Seules les requêtes SELECT sont autorisées")
+    def validate_history(self, value):
+        clean_history = []
+        for item in value:
+            role = item.get('role')
+            content = item.get('content')
+            if role not in ('USER', 'ASSISTANT') or not isinstance(content, str) or not content.strip():
+                raise serializers.ValidationError('Historique de conversation invalide.')
+            clean_history.append({
+                'role': 'user' if role == 'USER' else 'assistant',
+                'content': content.strip()[:1200],
+            })
+        return clean_history
 
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-            columns = [desc[0] for desc in cur.description]
-    return {"columns": columns, "rows": rows, "query": sql}
 
-@csrf_exempt
-async def ask_ai(request):
-    """Vue principale pour interroger l'IA"""
-    if request.method != "POST":
-        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
+class AssistantAPIView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    try:
-        body = json.loads(request.body)
-        question = body.get("question", "").strip()
-        if not question:
-            return JsonResponse({"error": "Le champ 'question' est requis"}, status=400)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Données JSON invalides"}, status=400)
+    def resolve_company(self, request, company_id):
+        is_platform = request.user.user_type == 'PLATFORM_ADMIN' or request.user.is_superuser
+        if is_platform:
+            if company_id is None:
+                return None
+            try:
+                return Company.objects.get(pk=company_id)
+            except Company.DoesNotExist:
+                raise serializers.ValidationError({'company_id': 'Entreprise introuvable.'})
+        if company_id is not None and company_id != request.user.company_id:
+            raise serializers.ValidationError({'company_id': 'Accès à cette entreprise refusé.'})
+        if not request.user.company_id:
+            raise serializers.ValidationError({'company_id': 'Aucune entreprise n’est associée à ce compte.'})
+        return request.user.company
 
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await call_ai_api(client, question)
-            content = response['choices'][0]['message']['content']
-            explanation, sql = extract_sql_and_explanation(content)
 
-            if sql:
-                try:
-                    result = execute_sql(sql)
-                    return JsonResponse({
-                        "success": True,
-                        "human_response": explanation,
-                        "data": result["rows"],
-                        "columns": result["columns"],
-                        "generated_sql": sql
-                    })
-                except Exception as e:
-                    logger.error(f"Erreur lors de l'exécution SQL : {str(e)}")
-                    return JsonResponse({"success": False, "error": str(e), "generated_sql": sql}, status=500)
-            else:
-                # Pas de SQL — réponse générale (question sur commerce/informatique)
-                return JsonResponse({"success": True, "human_response": explanation})
-
-    except Exception as e:
-        logger.exception("Erreur inattendue dans l'assistant")
-        return JsonResponse({"success": False, "error": "Erreur interne du serveur"}, status=500)
+class AssistantChatView(AssistantAPIView):
+    def post(self, request):
+        payload = ChatInputSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        company = self.resolve_company(request, payload.validated_data.get('company_id'))
+        question = payload.validated_data['question']
+        history = payload.validated_data.get('history', [])
+        context = company_snapshot(company) if company else platform_snapshot()
+        system = (
+            "Tu es StockPro IA, conseiller de gestion d'entreprise. Réponds exclusivement en français, clairement et de façon structurée. "
+            "Tu reçois un contexte en lecture seule : ne prétends jamais modifier des données, exécuter une action ou consulter une autre source. "
+            "Analyse les chiffres, signale les limites des données et propose des stratégies concrètes. "
+            "Ne fournis ni SQL, ni données personnelles, ni moyens de contourner les permissions."
+        )
+        messages = [{'role': 'system', 'content': system + '\n\nCONTEXTE AUTORISÉ:\n' + str(context)}]
+        messages.extend(history)
+        messages.append({'role': 'user', 'content': question})
+        if not settings.GROQ_API_KEY or not settings.GROQ_API_URL:
+            return Response({'detail': 'Le service IA n’est pas configuré.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        try:
+            result = httpx.post(settings.GROQ_API_URL, headers={'Authorization': f'Bearer {settings.GROQ_API_KEY}', 'Content-Type': 'application/json'}, json={
+                'model': get_groq_model_name(), 'messages': messages, 'temperature': 0.35, 'max_tokens': 900,
+            }, timeout=35.0)
+            result.raise_for_status()
+            answer = result.json()['choices'][0]['message']['content'].strip()
+        except (httpx.HTTPError, KeyError, IndexError, TypeError):
+            logger.exception('Groq assistant request failed')
+            return Response({'detail': 'Le service IA est temporairement indisponible.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'answer': answer, 'scope': company.name if company else 'Toutes les entreprises'})

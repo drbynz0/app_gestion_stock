@@ -1,6 +1,8 @@
 from django.db import models # type: ignore
+from users.models import Company
 
 class ExternalOrder(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='external_orders', editable=False)
     ORDER_STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('processing', 'Processing'),

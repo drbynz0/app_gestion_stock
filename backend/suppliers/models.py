@@ -1,8 +1,10 @@
 from django.db import models # type: ignore
 from products.models import Product
+from users.models import Company
 
 
 class Supplier(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='suppliers', editable=False)
     ice = models.CharField(max_length=15, unique=True)  # Identifiant unique
     name_respo = models.CharField(max_length=100)
     name_ent = models.CharField(max_length=100)

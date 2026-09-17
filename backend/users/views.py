@@ -1,124 +1,229 @@
-from rest_framework import generics, permissions, status,viewsets # type: ignore
-from rest_framework.views import APIView # type: ignore
-from rest_framework.response import Response # type: ignore
-from rest_framework.authtoken.models import Token # type: ignore
-from django.contrib.auth import authenticate # type: ignore
-from .models import User, SellerPrivileges
-from .serializers import UserSerializer, LoginSerializer, RegisterSerializer
+import uuid
+from django.db import transaction
+from django.utils.text import slugify
+from django.contrib.auth import authenticate
+from django.http import Http404
+from rest_framework import generics, permissions, status, viewsets
+from rest_framework.authtoken.models import Token
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import User, SellerPrivileges, Company
 from .permissions import IsSeller
+from .permissions_company import IsCompanyAdmin, IsPlatformAdmin
+from .tenancy import IsCompanyUser
+from .serializers import UserSerializer, RegisterSerializer, CompanyRegisterSerializer, CompanyAdminSerializer, CompanyDetailSerializer
+from stock.models import Warehouse, StockLocation
 
 
-class UserViewSet(viewsets.ModelViewSet):
+class CompanyUserQuerysetMixin:
+    def get_queryset(self):
+        if self.request.user.user_type == 'PLATFORM_ADMIN' or self.request.user.is_superuser:
+            return super().get_queryset()
+        return super().get_queryset().filter(company=self.request.user.company)
+
+
+class UserViewSet(CompanyUserQuerysetMixin, viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
+    # La devise et l'identité doivent être lisibles par tous les membres afin
+    # que les montants restent cohérents. Leur modification reste réservée à
+    # l'administrateur de l'entreprise.
+    permission_classes = [IsCompanyUser]
 
     def perform_create(self, serializer):
-        user = serializer.save()
+        user = serializer.save(company=self.request.user.company)
         if user.is_seller:
-            SellerPrivileges.objects.create(user=user)
+            SellerPrivileges.objects.get_or_create(user=user)
+
 
 class LoginView(APIView):
-    serializer_class = LoginSerializer
     permission_classes = [permissions.AllowAny]
-    
+
     def post(self, request):
-        
-        username = request.data.get('username')
-        password = request.data.get('password')
-        
-        user = authenticate(username=username, password=password)
-        
-        if user is not None:        
-            token, created = Token.objects.get_or_create(user=user)
-            return Response({
-                'token': token.key,
-                'user': UserSerializer(user).data,
-                'is_admin': user.is_staff,  # Pour identifier les admins (superusers)
-            })
-        else:
+        user = authenticate(username=request.data.get('username'), password=request.data.get('password'))
+        if user is None or not user.company_id or not user.company.is_active:
             return Response({'error': 'Identifiants incorrects'}, status=status.HTTP_401_UNAUTHORIZED)
-        
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({'token': token.key, 'user': UserSerializer(user).data, 'is_admin': user.user_type == 'ADMIN'})
+
 
 class SellerRegisterView(generics.CreateAPIView):
-    permission_classes = [permissions.IsAdminUser]  # Assurez-vous que seuls les admins peuvent créer des vendeurs
+    permission_classes = [IsCompanyAdmin]
     serializer_class = RegisterSerializer
-    
+
     def perform_create(self, serializer):
-        serializer.save(user_type='SELLER')
-        
+        serializer.save(user_type='SELLER', company=self.request.user.company)
+
 
 class ProfileView(generics.RetrieveUpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = RegisterSerializer
-    
+
     def get_object(self):
         return self.request.user
 
-    def get_serializer_context(self):
-        """Passe le contexte de la requête au serializer"""
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
-
     def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        
-        # Ne permet pas la modification du rôle via cette vue
-        if 'user_type' in request.data:
-            return Response(
-                {"error": "Vous ne pouvez pas modifier votre rôle via cette interface"},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        if 'user_type' in request.data or 'company' in request.data:
+            return Response({'error': 'Ce champ ne peut pas être modifié depuis votre profil.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
 
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
 
-        if getattr(instance, '_prefetched_objects_cache', None):
-            instance._prefetched_objects_cache = {}
+class CompanySettingsView(APIView):
+    """Paramètres métier propres au tenant ; jamais modifiables par un vendeur."""
+    permission_classes = [IsCompanyAdmin]
+    supported_currencies = {'MAD', 'EUR', 'USD', 'XOF', 'XAF', 'GBP'}
 
-        return Response(serializer.data)
+    def _company_or_error(self, request):
+        if not request.user.company_id:
+            return None
+        return request.user.company
+
+    def get(self, request):
+        company = self._company_or_error(request)
+        if not company:
+            return Response({'detail': 'Les paramètres d’entreprise ne sont pas disponibles pour un administrateur plateforme.'}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'id': company.id, 'name': company.name, 'currency': company.currency, 'logo_uri': company.logo_uri, 'primary_color': company.primary_color})
+
+    def patch(self, request):
+        if not IsCompanyAdmin().has_permission(request, self):
+            return Response({'detail': 'Vous n’êtes pas autorisé à modifier les paramètres de l’entreprise.'}, status=status.HTTP_403_FORBIDDEN)
+        company = self._company_or_error(request)
+        if not company:
+            return Response({'detail': 'Les paramètres d’entreprise ne sont pas disponibles pour un administrateur plateforme.'}, status=status.HTTP_403_FORBIDDEN)
+        fields = []
+        if 'currency' in request.data:
+            currency = str(request.data.get('currency', '')).upper()
+            if currency not in self.supported_currencies:
+                return Response({'currency': ['Devise non prise en charge.']}, status=status.HTTP_400_BAD_REQUEST)
+            company.currency = currency
+            fields.append('currency')
+        if 'name' in request.data:
+            name = str(request.data.get('name', '')).strip()
+            if not name:
+                return Response({'name': ['Le nom de l’entreprise est requis.']}, status=status.HTTP_400_BAD_REQUEST)
+            company.name = name
+            fields.append('name')
+        if 'logo_uri' in request.data:
+            company.logo_uri = str(request.data.get('logo_uri') or '')
+            fields.append('logo_uri')
+        if 'primary_color' in request.data:
+            color = str(request.data.get('primary_color', '')).strip()
+            if not color.startswith('#') or len(color) not in (4, 7, 9):
+                return Response({'primary_color': ['Couleur invalide.']}, status=status.HTTP_400_BAD_REQUEST)
+            company.primary_color = color
+            fields.append('primary_color')
+        if not fields:
+            return Response({'detail': 'Aucun paramètre à mettre à jour.'}, status=status.HTTP_400_BAD_REQUEST)
+        company.save(update_fields=[*fields, 'updated_at'])
+        return self.get(request)
+
+
+class CompanyAdminViewSet(viewsets.ModelViewSet):
+    """Platform-only tenant governance: review, suspend or update a company."""
+    queryset = Company.objects.all().order_by('-created_at')
+    serializer_class = CompanyAdminSerializer
+    permission_classes = [IsPlatformAdmin]
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_serializer_class(self):
+        return CompanyDetailSerializer if self.action == 'retrieve' else CompanyAdminSerializer
+
 
 class SellerDashboard(generics.RetrieveAPIView):
-    permission_classes = [IsSeller, permissions.IsAdminUser]  # Assurez-vous que seuls les vendeurs et les admins peuvent accéder à cette vue
+    permission_classes = [permissions.IsAuthenticated]
     serializer_class = RegisterSerializer
-    
-    def get(self, request, *args, **kwargs):
-        # Exemple de vue réservée aux vendeurs
-        return Response({
-            'message': f'Bienvenue vendeur {request.user.username}',
-            'stats': {}  # Ajoutez des stats métiers ici
-        })
-        
-class SellerListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
-    serializer_class = RegisterSerializer
-    
-    def get_queryset(self):
-        return User.objects.filter(is_staff=False).order_by('username')
 
-class SellerUpdateView(generics.UpdateAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    def get(self, request, *args, **kwargs):
+        return Response({'message': f'Bienvenue {request.user.username}', 'stats': {}})
+
+
+class SellerListView(CompanyUserQuerysetMixin, generics.ListAPIView):
+    permission_classes = [IsCompanyAdmin]
+    serializer_class = RegisterSerializer
+    queryset = User.objects.filter(is_staff=False).order_by('username')
+
+
+class SellerUpdateView(CompanyUserQuerysetMixin, generics.UpdateAPIView):
+    permission_classes = [IsCompanyAdmin]
     serializer_class = RegisterSerializer
     queryset = User.objects.filter(is_staff=False)
-    lookup_field = 'pk'  # ou 'id' selon ta route
+    lookup_field = 'pk'
 
-    def get_object(self):
-        seller = super().get_object()
-        if seller.is_staff:
-            raise Response({'error': 'Utilisateur non vendeur'}, status=status.HTTP_400_BAD_REQUEST)
-        return seller
-    
-class SellerDeleteView(generics.DestroyAPIView):
-    permission_classes = [permissions.IsAdminUser]
+
+class SellerDeleteView(CompanyUserQuerysetMixin, generics.DestroyAPIView):
+    permission_classes = [IsCompanyAdmin]
     serializer_class = UserSerializer
     queryset = User.objects.filter(is_staff=False)
     lookup_field = 'pk'
 
     def perform_destroy(self, instance):
-        # Supprimer ses privilèges s'ils existent
         SellerPrivileges.objects.filter(user=instance).delete()
         instance.delete()
 
 
+class CompanyRegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = CompanyRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        base_slug = slugify(data['company_name']) or 'company'
+        slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
+
+        if User.objects.filter(username=data['username']).exists():
+            return Response({'username': ["Ce nom d'utilisateur est déjà utilisé."]}, status=status.HTTP_400_BAD_REQUEST)
+        if data.get('email') and User.objects.filter(email=data['email']).exists():
+            return Response({'email': ["Cette adresse e-mail est déjà associée à un compte."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Créer la compagnie
+        company = Company.objects.create(name=data['company_name'], slug=slug)
+
+        # 2. Créer le compte Administrateur
+        user = User.objects.create_user(
+            username=data['username'],
+            email=data.get('email', ''),
+            password=data['password'],
+            first_name=data.get('first_name', ''),
+            last_name=data.get('last_name', ''),
+            phone=data.get('phone', ''),
+            user_type='ADMIN',
+            company=company,
+        )
+
+        # 3. Créer l'entrepôt principal et l'emplacement par défaut
+        warehouse_name = data.get('warehouse_name') or 'Entrepôt Principal'
+        wh = Warehouse.objects.create(
+            company=company,
+            name=warehouse_name,
+            code='WH-MAIN',
+        )
+        StockLocation.objects.create(
+            warehouse=wh,
+            name='Zone Principale',
+            code='LOC-A1',
+        )
+
+        # 4. Token d'authentification
+        token, _ = Token.objects.get_or_create(user=user)
+
+        return Response({
+            'token': token.key,
+            'user': UserSerializer(user).data,
+            'company': {
+                'id': company.id,
+                'name': company.name,
+                'slug': company.slug,
+                'currency': company.currency,
+                'logo_uri': company.logo_uri,
+                'primary_color': company.primary_color,
+            },
+            'warehouse': {
+                'id': wh.id,
+                'name': wh.name,
+                'code': wh.code,
+            }
+        }, status=status.HTTP_201_CREATED)

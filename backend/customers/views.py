@@ -2,10 +2,13 @@ from rest_framework import generics, status # type: ignore
 from rest_framework.response import Response # type: ignore
 from .models import Customer
 from .serializers import CustomerSerializer
+from users.tenancy import CompanyQuerysetMixin
+from users.permissions_company import HasCustomerPermission
 
-class CustomerListCreateView(generics.ListCreateAPIView):
+class CustomerListCreateView(CompanyQuerysetMixin, generics.ListCreateAPIView):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
+    permission_classes = [HasCustomerPermission]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -14,9 +17,10 @@ class CustomerListCreateView(generics.ListCreateAPIView):
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
 
-class CustomerRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+class CustomerRetrieveUpdateDestroyView(CompanyQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
+    permission_classes = [HasCustomerPermission]
     lookup_field = 'pk'
 
     def destroy(self, request, *args, **kwargs):

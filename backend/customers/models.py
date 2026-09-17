@@ -1,8 +1,10 @@
 from django.db import models # type: ignore
 from django.core.validators import MinLengthValidator, RegexValidator # type: ignore
 from django.utils.translation import gettext_lazy as _ # type: ignore
+from users.models import Company
 
 class Customer(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='customers', editable=False)
     class Meta:
         verbose_name = _("Client")
         verbose_name_plural = _("Clients")

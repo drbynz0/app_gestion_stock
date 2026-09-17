@@ -8,22 +8,27 @@ from .serializers import (
 )
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
+from users.tenancy import CompanyQuerysetMixin
+from users.permissions_company import HasOrderPermission
 
 
-class InternalOrderListCreateView(generics.ListCreateAPIView):
+class InternalOrderListCreateView(CompanyQuerysetMixin, generics.ListCreateAPIView):
     queryset = InternalOrder.objects.all().order_by('-created_at')
     serializer_class = InternalOrderSerializer
+    permission_classes = [HasOrderPermission]
 
-class InternalOrderDetailView(generics.RetrieveUpdateDestroyAPIView):
+class InternalOrderDetailView(CompanyQuerysetMixin, generics.RetrieveUpdateDestroyAPIView):
     queryset = InternalOrder.objects.all()
     serializer_class = InternalOrderSerializer
+    permission_classes = [HasOrderPermission]
     
 class PaymentListCreateView(generics.ListCreateAPIView):
     serializer_class = PaymentSerializer
+    permission_classes = [HasOrderPermission]
     
     def get_queryset(self):
         order_id = self.kwargs.get('order_id')
-        return Payment.objects.filter(order_id=order_id).order_by('-date')
+        return Payment.objects.filter(order_id=order_id, order__company=self.request.user.company).order_by('-date')
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -32,24 +37,17 @@ class PaymentListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         order_id = self.kwargs.get('order_id')
-        order = get_object_or_404(InternalOrder, pk=order_id)
+        order = get_object_or_404(InternalOrder, pk=order_id, company=self.request.user.company)
         
-        amount = serializer.validated_data['amount']
-        order.total_paid += amount
-        order.remaining_price = order.total_price - order.total_paid
-        
-        if order.remaining_price <= 0:
-            order.status = 'completed'
-        
-        order.save()
         serializer.save(order=order)
 
 class PaymentDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = PaymentSerializer
+    permission_classes = [HasOrderPermission]
     
     def get_queryset(self):
         order_id = self.kwargs.get('order_id')
-        return Payment.objects.filter(order_id=order_id)
+        return Payment.objects.filter(order_id=order_id, order__company=self.request.user.company)
 
     def get_serializer_class(self):
         if self.request.method in ['PUT', 'PATCH']:

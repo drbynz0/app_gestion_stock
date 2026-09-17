@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken  # Ajout
-from .models import SellerPrivileges
+from .models import SellerPrivileges, Company
 
 User = get_user_model()
 
@@ -70,6 +70,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             password=validated_data['password'],
             user_type=validated_data.get('user_type', ''),
             phone=validated_data.get('phone', '')
+            ,company=validated_data.get('company')
         )
 
         # Génération du token après création
@@ -109,3 +110,41 @@ class RegisterSerializer(serializers.ModelSerializer):
                 SellerPrivileges.objects.create(user=instance, **privileges_data)
 
         return instance
+
+
+class CompanyAdminSerializer(serializers.ModelSerializer):
+    user_count = serializers.IntegerField(source='users.count', read_only=True)
+
+    class Meta:
+        model = Company
+        fields = ['id', 'name', 'slug', 'is_active', 'currency', 'logo_uri', 'primary_color', 'created_at', 'updated_at', 'user_count']
+        read_only_fields = ['id', 'slug', 'created_at', 'updated_at', 'user_count']
+
+
+class CompanyMemberSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'phone', 'user_type', 'date_joined', 'last_login']
+
+
+class CompanyDetailSerializer(CompanyAdminSerializer):
+    creator = serializers.SerializerMethodField()
+    members = CompanyMemberSerializer(source='users', many=True, read_only=True)
+
+    class Meta(CompanyAdminSerializer.Meta):
+        fields = CompanyAdminSerializer.Meta.fields + ['creator', 'members']
+
+    def get_creator(self, company):
+        administrator = company.users.filter(user_type='ADMIN').order_by('date_joined').first()
+        return CompanyMemberSerializer(administrator).data if administrator else None
+
+
+class CompanyRegisterSerializer(serializers.Serializer):
+    company_name = serializers.CharField(max_length=160)
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=6)
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
+    phone = serializers.CharField(max_length=30, required=False, allow_blank=True, default='')
+    warehouse_name = serializers.CharField(max_length=120, required=False, default='Entrepôt Principal')

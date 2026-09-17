@@ -45,6 +45,7 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
 GROQ_API_URL = os.getenv('GROQ_API_URL')
+GROQ_MODEL = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')
 
 # Application definition
 
@@ -71,6 +72,7 @@ INSTALLED_APPS = [
     'historical',
     'reset_password',
     'assistant',
+    'stock',
 ]
 
 REST_FRAMEWORK = {
@@ -109,18 +111,19 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "https://comparable-arlee-drbynz-e68d4d38.koyeb.app",
     "https://appstock-production.up.railway.app",
-     "http://localhost:3000",
-     "http://127.0.0.1:8000",
-     " https://3f4a-45-218-97-102.ngrok-free.app",
-     "https://b8d6-196-206-9-241.ngrok-free.app"
- ]
+    "http://localhost:3000",
+    "http://127.0.0.1:8000",
+    "https://3f4a-45-218-97-102.ngrok-free.app",
+    "https://b8d6-196-206-9-241.ngrok-free.app",
+]
 
 ALLOWED_HOSTS = [
     'comparable-arlee-drbynz-e68d4d38.koyeb.app',
-    'appstock-production.up.railway.app'
+    'appstock-production.up.railway.app',
     'b8d6-196-206-9-241.ngrok-free.app',
     'optionally-willing-raven.ngrok-free.app',
     '127.0.0.1',
+    'localhost',
 ]
 
 X_FRAME_OPTIONS = 'ALLOWALL'

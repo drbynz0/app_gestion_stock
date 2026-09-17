@@ -1,6 +1,8 @@
 from django.db import models # type: ignore
+from users.models import Company
 
 class Discount(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name='discounts', editable=False)
     title = models.CharField(max_length=255)
     date_debut = models.DateField(null=True, blank=True)
     date_fin = models.DateField(null=True, blank=True)
