@@ -2,7 +2,7 @@ import os
 import django
 
 # Initialisation de Django
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "cti_app_dj.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "api.settings")
 django.setup()
 
 from django.apps import apps
