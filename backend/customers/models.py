@@ -31,7 +31,9 @@ class Customer(models.Model):
         _("Email"),
         max_length=100,
         unique=True,
-        db_index=True
+        db_index=True,
+        null=True,
+        blank=True,
     )
     
     phone_number = models.CharField(
