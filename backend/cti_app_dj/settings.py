@@ -124,6 +124,7 @@ ALLOWED_HOSTS = [
     'optionally-willing-raven.ngrok-free.app',
     '127.0.0.1',
     'localhost',
+    'app-gestion-stock-hqge.onrender.com',
 ]
 
 X_FRAME_OPTIONS = 'ALLOWALL'
