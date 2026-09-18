@@ -1,4 +1,6 @@
+import os
 import logging
+import httpx
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils.html import strip_tags
@@ -8,6 +10,135 @@ logger = logging.getLogger(__name__)
 
 def _get_from_email():
     return getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'EMAIL_HOST_USER', 'noreply@stockapp.com')
+
+
+def dispatch_email(recipient: str, subject: str, html_content: str, plain_content: str) -> bool:
+    """
+    Envoi d'email haute fiabilité adapté aux hébergements cloud comme Render.
+    1. Si RESEND_API_KEY est défini -> API REST Resend (HTTPS port 443 - Jamais bloqué sur Render)
+    2. Si BREVO_API_KEY est défini -> API REST Brevo (HTTPS port 443 - Jamais bloqué sur Render)
+    3. Si SENDGRID_API_KEY est défini -> API REST SendGrid (HTTPS port 443)
+    4. Sinon -> Tentative SMTP standard Django avec timeout court (5s)
+    5. Fallback -> Log sécurisé pour consultation en console Render
+    """
+    if not recipient:
+        return False
+
+    resend_api_key = getattr(settings, 'RESEND_API_KEY', None) or os.getenv('RESEND_API_KEY')
+    brevo_api_key = getattr(settings, 'BREVO_API_KEY', None) or os.getenv('BREVO_API_KEY')
+    sendgrid_api_key = getattr(settings, 'SENDGRID_API_KEY', None) or os.getenv('SENDGRID_API_KEY')
+    from_email = _get_from_email()
+
+    # --- 1. RESEND (Recommandé par Render - HTTPS Port 443) ---
+    if resend_api_key:
+        try:
+            sender = getattr(settings, 'RESEND_FROM_EMAIL', None) or os.getenv('RESEND_FROM_EMAIL') or from_email
+            if 'gmail.com' in sender.lower() and not os.getenv('RESEND_FROM_EMAIL'):
+                sender = 'Gestion de Stock <onboarding@resend.dev>'
+
+            resp = httpx.post(
+                'https://api.resend.com/emails',
+                headers={
+                    'Authorization': f'Bearer {resend_api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'from': sender,
+                    'to': [recipient],
+                    'subject': subject,
+                    'html': html_content,
+                    'text': plain_content,
+                },
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 201):
+                logger.info(f"[Resend API] Email envoyé avec succès à {recipient}")
+                return True
+            else:
+                logger.error(f"[Resend API] Erreur {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.error(f"[Resend API] Exception lors de l'envoi à {recipient}: {e}")
+
+    # --- 2. BREVO (Ex-Sendinblue - HTTPS Port 443) ---
+    if brevo_api_key:
+        try:
+            resp = httpx.post(
+                'https://api.brevo.com/v3/smtp/email',
+                headers={
+                    'api-key': brevo_api_key,
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'sender': {'name': 'Gestion de Stock', 'email': from_email},
+                    'to': [{'email': recipient}],
+                    'subject': subject,
+                    'htmlContent': html_content,
+                    'textContent': plain_content,
+                },
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 201):
+                logger.info(f"[Brevo API] Email envoyé avec succès à {recipient}")
+                return True
+            else:
+                logger.error(f"[Brevo API] Erreur {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.error(f"[Brevo API] Exception lors de l'envoi à {recipient}: {e}")
+
+    # --- 3. SENDGRID (HTTPS Port 443) ---
+    if sendgrid_api_key:
+        try:
+            resp = httpx.post(
+                'https://api.sendgrid.com/v3/mail/send',
+                headers={
+                    'Authorization': f'Bearer {sendgrid_api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'personalizations': [{'to': [{'email': recipient}]}],
+                    'from': {'email': from_email, 'name': 'Gestion de Stock'},
+                    'subject': subject,
+                    'content': [
+                        {'type': 'text/plain', 'value': plain_content},
+                        {'type': 'text/html', 'value': html_content},
+                    ],
+                },
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 202):
+                logger.info(f"[SendGrid API] Email envoyé avec succès à {recipient}")
+                return True
+            else:
+                logger.error(f"[SendGrid API] Erreur {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.error(f"[SendGrid API] Exception lors de l'envoi à {recipient}: {e}")
+
+    # --- 4. TENTATIVE SMTP DJANGO (Local ou serveur autorisant SMTP) ---
+    try:
+        send_mail(
+            subject=subject,
+            message=plain_content,
+            from_email=from_email,
+            recipient_list=[recipient],
+            html_message=html_content,
+            fail_silently=False,
+        )
+        logger.info(f"[SMTP] Email envoyé avec succès à {recipient}")
+        return True
+    except Exception as e:
+        logger.warning(
+            f"[SMTP Indisponible / Bloqué] Impossible d'envoyer par SMTP à {recipient} (typique sur Render) : {e}. "
+            f"Activez RESEND_API_KEY ou BREVO_API_KEY sur Render pour un envoi HTTPS immédiat."
+        )
+
+    # --- 5. LOG DE SECOURS (Permet de voir le code dans les logs Render sans bloquer) ---
+    print("\n" + "=" * 60)
+    print(f"[RENDER LOG SECOURS] Email destiné à : {recipient}")
+    print(f"Sujet : {subject}")
+    print(f"Contenu texte :\n{plain_content}")
+    print("=" * 60 + "\n")
+
+    return False
 
 
 def _render_base_email(title: str, subtitle: str, body_html: str) -> str:
@@ -57,14 +188,17 @@ def _render_base_email(title: str, subtitle: str, body_html: str) -> str:
 </html>"""
 
 
-def send_verification_code_email(email: str, code: str, purpose: str = "Vérification de sécurité") -> bool:
+def send_verification_code_email(email: str, code: str, purpose: str = "Vérification de sécurité", user_name: str = None) -> bool:
     """Envoi réel du code à 6 chiffres pour l'onboarding, la mise à jour de profil ou le 2FA."""
     subject = f"[{code}] Votre code de sécurité - Gestion de Stock"
     title = "Code de vérification"
     subtitle = purpose
 
+    greeting = f"Bonjour <strong>{user_name}</strong>," if user_name else "Bonjour,"
+    greeting_plain = f"Bonjour {user_name}," if user_name else "Bonjour,"
+
     body_html = f"""
-      <p style="margin-top: 0;">Bonjour,</p>
+      <p style="margin-top: 0;">{greeting}</p>
       <p>Voici votre code de vérification à 6 chiffres requis pour valider votre action :</p>
       
       <div style="text-align: center; margin: 30px 0;">
@@ -79,22 +213,14 @@ def send_verification_code_email(email: str, code: str, purpose: str = "Vérific
     """
 
     html_content = _render_base_email(title, subtitle, body_html)
-    plain_content = f"Bonjour,\n\nVotre code de vérification est : {code}\nCe code expire dans 10 minutes.\n\nL'équipe de gestion de stock."
+    plain_content = f"{greeting_plain}\n\nVotre code de vérification est : {code}\nCe code expire dans 10 minutes.\n\nL'équipe de gestion de stock."
 
-    try:
-        send_mail(
-            subject=subject,
-            message=plain_content,
-            from_email=_get_from_email(),
-            recipient_list=[email],
-            html_message=html_content,
-            fail_silently=False,
-        )
-        logger.info(f"Email de vérification envoyé à {email}")
-        return True
-    except Exception as e:
-        logger.error(f"Erreur lors de l'envoi de l'email à {email}: {e}")
-        return False
+    return dispatch_email(
+        recipient=email,
+        subject=subject,
+        html_content=html_content,
+        plain_content=plain_content,
+    )
 
 
 def send_company_welcome_email(user, company) -> bool:
@@ -131,20 +257,12 @@ def send_company_welcome_email(user, company) -> bool:
     html_content = _render_base_email(title, subtitle, body_html)
     plain_content = f"Bonjour {user.username},\n\nVotre entreprise {company.name} a bien été créée.\nVous êtes l'administrateur principal.\n\nBonne utilisation !"
 
-    try:
-        send_mail(
-            subject=subject,
-            message=plain_content,
-            from_email=_get_from_email(),
-            recipient_list=[user.email],
-            html_message=html_content,
-            fail_silently=False,
-        )
-        logger.info(f"Email de bienvenue envoyé à {user.email}")
-        return True
-    except Exception as e:
-        logger.error(f"Erreur d'envoi d'email de bienvenue à {user.email}: {e}")
-        return False
+    return dispatch_email(
+        recipient=user.email,
+        subject=subject,
+        html_content=html_content,
+        plain_content=plain_content,
+    )
 
 
 def send_password_changed_notification_email(user) -> bool:
@@ -172,20 +290,12 @@ def send_password_changed_notification_email(user) -> bool:
     html_content = _render_base_email(title, subtitle, body_html)
     plain_content = f"Bonjour {user.username},\n\nLe mot de passe de votre compte a été modifié avec succès.\nSi vous n'en êtes pas l'auteur, contactez immédiatement votre responsable."
 
-    try:
-        send_mail(
-            subject=subject,
-            message=plain_content,
-            from_email=_get_from_email(),
-            recipient_list=[user.email],
-            html_message=html_content,
-            fail_silently=False,
-        )
-        logger.info(f"Notification de changement de mot de passe envoyée à {user.email}")
-        return True
-    except Exception as e:
-        logger.error(f"Erreur d'envoi de notification mot de passe à {user.email}: {e}")
-        return False
+    return dispatch_email(
+        recipient=user.email,
+        subject=subject,
+        html_content=html_content,
+        plain_content=plain_content,
+    )
 
 
 def send_company_deletion_notification_email(email: str, company_name: str, admin_name: str) -> bool:
@@ -209,16 +319,9 @@ def send_company_deletion_notification_email(email: str, company_name: str, admi
     html_content = _render_base_email(title, subtitle, body_html)
     plain_content = f"Bonjour {admin_name},\n\nL'entreprise {company_name} et tous les comptes associés ont été définitivement supprimés."
 
-    try:
-        send_mail(
-            subject=subject,
-            message=plain_content,
-            from_email=_get_from_email(),
-            recipient_list=[email],
-            html_message=html_content,
-            fail_silently=False,
-        )
-        return True
-    except Exception as e:
-        logger.error(f"Erreur d'envoi notification suppression à {email}: {e}")
-        return False
+    return dispatch_email(
+        recipient=email,
+        subject=subject,
+        html_content=html_content,
+        plain_content=plain_content,
+    )
