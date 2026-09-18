@@ -1,32 +1,41 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 
 
+class IsCompanyPrimaryAdmin(BasePermission):
+    """
+    Administrateur créateur / principal de l'entreprise.
+    Seul autorisé à modifier ou supprimer l'entreprise, et à gérer les administrateurs délégués.
+    """
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated or not user.company_id:
+            return False
+        return bool(user.is_primary_admin or (user.company and user.company.created_by_id == user.id))
+
+
 class IsCompanyAdmin(BasePermission):
-    """Business administrator, independent from Django's back-office flag."""
+    """
+    Administrateur de l'entreprise (qu'il soit créateur principal ou administrateur délégué).
+    Accès complet aux modules opérationnels et à l'équipe, mais PAS à la modification/suppression de l'entreprise.
+    """
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and user.is_authenticated and (
-            user.user_type == 'PLATFORM_ADMIN' or user.is_superuser or
-            (user.company_id and user.user_type == 'ADMIN')
-        ))
-
-
-class IsPlatformAdmin(BasePermission):
-    """Reserved for the SaaS operator; never granted to a tenant administrator."""
-    def has_permission(self, request, view):
-        user = request.user
-        return bool(user and user.is_authenticated and (user.user_type == 'PLATFORM_ADMIN' or user.is_superuser))
+        return bool(user and user.is_authenticated and user.company_id and user.user_type == 'ADMIN')
 
 
 class HasCompanyPrivilege(BasePermission):
-    """Server-side RBAC. UI visibility must never be the only access control."""
+    """
+    Contrôle d'accès RBAC au sein du tenant.
+    Un administrateur (principal ou délégué) a tous les accès opérationnels.
+    Un vendeur dépend des privilèges assignés.
+    """
     privilege_by_method = {}
 
     def has_permission(self, request, view):
         user = request.user
         if not user or not user.is_authenticated or not user.company_id:
-            return bool(user and user.is_authenticated and (user.user_type == 'PLATFORM_ADMIN' or user.is_superuser))
-        if request.method in SAFE_METHODS or user.user_type in ('ADMIN', 'PLATFORM_ADMIN') or user.is_superuser:
+            return False
+        if request.method in SAFE_METHODS or user.user_type == 'ADMIN':
             return True
         privilege = self.privilege_by_method.get(request.method)
         return bool(privilege and getattr(getattr(user, 'privileges', None), privilege, False))

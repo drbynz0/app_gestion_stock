@@ -16,25 +16,26 @@ User = get_user_model()
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def request_reset_code(request):
-    email = request.data.get('email')
-    username = request.data.get('username')
+    email = str(request.data.get('email', '')).strip()
+    username = str(request.data.get('username', '')).strip()
     
     try:
-        user = User.objects.get(email=email, username=username)
+        user = User.objects.get(email__iexact=email, username__iexact=username)
     except User.DoesNotExist:
-        return Response({'error': 'Aucun utilisateur trouvé'}, status=400)
+        return Response({'error': 'Aucun utilisateur trouvé avec cet identifiant et e-mail.'}, status=400)
 
     code = PasswordResetCode.generate_code(user)
     
-    send_mail(
-        'Code de réinitialisation',
-        f'Votre code est : {code}',
-        'noreply@votresite.com',
-        [email],
-        fail_silently=False,
+    from users.email_service import send_verification_code_email
+    full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+    send_verification_code_email(
+        email=user.email,
+        code=code,
+        purpose="Réinitialisation de votre mot de passe",
+        user_name=full_name
     )
     
-    return Response({'success': 'Code envoyé'})
+    return Response({'success': 'Code envoyé avec succès par e-mail.'})
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -66,6 +67,11 @@ def reset_password(request):
         user = User.objects.get(email=email)
         user.set_password(new_password)
         user.save()
+        try:
+            from users.email_service import send_password_changed_notification_email
+            send_password_changed_notification_email(user)
+        except Exception:
+            pass
         return Response({'success': 'Mot de passe mis à jour'})
     except User.DoesNotExist:
         return Response({'error': 'Utilisateur non trouvé'}, status=400)
@@ -93,5 +99,11 @@ def change_password(request):
     # Mise à jour du mot de passe
     user.set_password(new_password)
     user.save()
+
+    try:
+        from users.email_service import send_password_changed_notification_email
+        send_password_changed_notification_email(user)
+    except Exception:
+        pass
     
     return Response({'success': 'Mot de passe mis à jour avec succès'})

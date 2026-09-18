@@ -1,22 +1,29 @@
-from rest_framework.permissions import BasePermission, SAFE_METHODS
+from rest_framework.permissions import BasePermission
 
 
 class IsCompanyUser(BasePermission):
-    """Reject accounts that are not assigned to an active tenant."""
+    """Rejette les requêtes des comptes qui ne sont pas affectés à une entreprise active."""
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and user.is_authenticated and (
-            user.user_type == 'PLATFORM_ADMIN' or user.is_superuser or
-            (user.company_id and user.company.is_active)
-        ))
+        return bool(
+            user and 
+            user.is_authenticated and 
+            user.company_id and 
+            user.company.is_active
+        )
 
 
 class CompanyQuerysetMixin:
-    """Reusable tenant filter for DRF generic views and viewsets."""
+    """
+    Filtre tenant strict pour toutes les vues DRF.
+    Aucune entreprise ne peut voir les données d'une autre entreprise.
+    Même un compte superadmin est strictement isolé à son entreprise dans l'application.
+    """
     def get_queryset(self):
-        if self.request.user.user_type == 'PLATFORM_ADMIN' or self.request.user.is_superuser:
-            return super().get_queryset()
-        return super().get_queryset().filter(company=self.request.user.company)
+        user = self.request.user
+        if not user or not user.is_authenticated or not user.company_id:
+            return super().get_queryset().none()
+        return super().get_queryset().filter(company=user.company)
 
     def perform_create(self, serializer):
         serializer.save(company=self.request.user.company)
