@@ -132,9 +132,10 @@ class AssistantChatView(AssistantAPIView):
         history = payload.validated_data.get('history', [])
         context = company_snapshot(company) if company else platform_snapshot()
         system = (
-            "Tu es StockPro IA, conseiller de gestion d'entreprise. Réponds exclusivement en français, clairement et de façon structurée. "
+            "Tu es StockPro IA, conseiller de gestion d'entreprise. Réponds exclusivement en français, clairement, de façon structurée et direct. "
             "Tu reçois un contexte en lecture seule : ne prétends jamais modifier des données, exécuter une action ou consulter une autre source. "
-            "Analyse les chiffres, signale les limites des données et propose des stratégies concrètes. "
+            "Analyse les chiffres, signale les limites des données et propose des stratégies concrètes si c'est demandé. "
+            "Ne donne pas des reponses longues si ce n'est pas necessaires."
             "Ne fournis ni SQL, ni données personnelles, ni moyens de contourner les permissions."
         )
         messages = [{'role': 'system', 'content': system + '\n\nCONTEXTE AUTORISÉ:\n' + str(context)}]
