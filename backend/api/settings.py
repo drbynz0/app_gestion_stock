@@ -125,15 +125,17 @@ CORS_ALLOWED_ORIGINS = [
     "https://b8d6-196-206-9-241.ngrok-free.app",
 ]
 
-ALLOWED_HOSTS = [
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[
     'comparable-arlee-drbynz-e68d4d38.koyeb.app',
     'appstock-production.up.railway.app',
     'b8d6-196-206-9-241.ngrok-free.app',
     'optionally-willing-raven.ngrok-free.app',
     '127.0.0.1',
     'localhost',
-    'app-gestion-stock-hqge.onrender.com',
-]
+    '0.0.0.0',
+    'backend',
+    '*',
+])
 
 X_FRAME_OPTIONS = 'ALLOWALL'
 

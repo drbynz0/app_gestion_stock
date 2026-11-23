@@ -1,0 +1,76 @@
+services:
+  # ==========================================
+  # Service Backend (Django REST Framework)
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: app_stock_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/var.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ALLOWED_HOSTS=localhost,127.0.0.1,backend,0.0.0.0,*
+    volumes:
+      - ./backend:/app
+      - backend_media:/app/media
+      - backend_staticfiles:/app/staticfiles
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  # ==========================================
+  # Service Frontend (React Native Web Preview)
+  # ==========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: app_stock_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - API_BASE_URL=http://localhost:8000/api
+      - NODE_ENV=development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - app_network
+
+  # ==========================================
+  # Base de données PostgreSQL locale (Optionnelle)
+  # À activer si vous ne souhaitez pas utiliser Supabase
+  # Lancement : docker compose --profile local-db up
+  # ==========================================
+  db:
+    image: postgres:16-alpine
+    container_name: app_stock_db
+    profiles: ["local-db"]
+    environment:
+      POSTGRES_DB: ${LOCAL_DB_NAME:-cti_app_db}
+      POSTGRES_USER: ${LOCAL_DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app_network
+
+volumes:
+  backend_media:
+  backend_staticfiles:
+  postgres_data:
+
+networks:
+  app_network:
+    driver: bridge

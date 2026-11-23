@@ -7,10 +7,6 @@ from django.utils import timezone # type: ignore
 
 
 def validate_username_format(value):
-    """
-    Validation stricte : uniquement des lettres minuscules, des chiffres, @ et _.
-    Aucune majuscule ni caractère spécial autorisé. Longueur minimale : 3 caractères.
-    """
     if not value or len(value) < 3:
         raise ValidationError("Le nom d'utilisateur doit comporter au moins 3 caractères.")
     if not re.match(r'^[a-z0-9@_]+$', value):

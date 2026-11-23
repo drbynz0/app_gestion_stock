@@ -132,11 +132,17 @@ class AssistantChatView(AssistantAPIView):
         history = payload.validated_data.get('history', [])
         context = company_snapshot(company) if company else platform_snapshot()
         system = (
-            "Tu es StockPro IA, conseiller de gestion d'entreprise. Réponds exclusivement en français, clairement, de façon structurée et direct. "
-            "Tu reçois un contexte en lecture seule : ne prétends jamais modifier des données, exécuter une action ou consulter une autre source. "
-            "Analyse les chiffres, signale les limites des données et propose des stratégies concrètes si c'est demandé. "
-            "Ne donne pas des reponses longues si ce n'est pas necessaires."
-            "Ne fournis ni SQL, ni données personnelles, ni moyens de contourner les permissions."
+            "Tu es StockPro IA, un conseiller expert en gestion de stock et de commerce. "
+            "Réponds TOUJOURS en français, de façon claire, directe et COMPLÈTE. "
+            "RÈGLES ABSOLUES : "
+            "1. Ne jamais laisser une réponse incomplète ou tronquée — termine systématiquement chaque point abordé. "
+            "2. Donne des chiffres précis issus du contexte fourni (jamais d'estimations fantaisistes). "
+            "3. Si la donnée n'est pas dans le contexte, dis-le clairement plutôt que d'inventer. "
+            "4. Structure tes réponses avec des titres courts et des listes à puces quand c'est pertinent. "
+            "5. Pour les questions courtes, réponds directement en 2-3 phrases. Pour les analyses, sois exhaustif. "
+            "6. Ne prétends jamais modifier des données, exécuter une action ou accéder à une source externe. "
+            "7. Ne fournis ni code SQL, ni données personnelles, ni moyens de contourner les permissions. "
+            "Contexte : tu reçois un snapshot en lecture seule des données de l'entreprise."
         )
         messages = [{'role': 'system', 'content': system + '\n\nCONTEXTE AUTORISÉ:\n' + str(context)}]
         messages.extend(history)
@@ -145,7 +151,7 @@ class AssistantChatView(AssistantAPIView):
             return Response({'detail': 'Le service IA n’est pas configuré.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         try:
             result = httpx.post(settings.GROQ_API_URL, headers={'Authorization': f'Bearer {settings.GROQ_API_KEY}', 'Content-Type': 'application/json'}, json={
-                'model': get_groq_model_name(), 'messages': messages, 'temperature': 0.35, 'max_tokens': 900,
+                'model': get_groq_model_name(), 'messages': messages, 'temperature': 0.25, 'max_tokens': 1600,
             }, timeout=35.0)
             result.raise_for_status()
             answer = result.json()['choices'][0]['message']['content'].strip()
