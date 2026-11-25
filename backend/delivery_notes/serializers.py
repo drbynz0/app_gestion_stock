@@ -17,6 +17,8 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
+        if 'company' not in validated_data and 'request' in self.context:
+            validated_data['company'] = self.context['request'].user.company
         items_data = validated_data.pop('items')
         delivery_note = DeliveryNote.objects.create(**validated_data)
         for item_data in items_data:

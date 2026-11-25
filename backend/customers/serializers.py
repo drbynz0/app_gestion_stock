@@ -6,12 +6,18 @@ class CustomerSerializer(serializers.ModelSerializer):
         model = Customer
         fields = '__all__'
         extra_kwargs = {
-            'email': {'required': True},
-            'phone_number': {'required': True},
+            'email': {'required': False, 'allow_null': True, 'allow_blank': True},
+            'phone_number': {'required': False, 'allow_blank': True},
+            'ice': {'required': False, 'allow_null': True, 'allow_blank': True},
             'company': {'read_only': True},
         }
 
+    def validate_email(self, value):
+        if not value or not str(value).strip():
+            return None
+        return str(value).strip().lower()
+
     def validate_ice(self, value):
-        if value and len(value) != 15:
-            raise serializers.ValidationError("L'ICE doit contenir exactement 15 caractères")
-        return value
+        if not value or not str(value).strip():
+            return None
+        return str(value).strip()

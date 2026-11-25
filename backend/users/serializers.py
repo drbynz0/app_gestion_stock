@@ -179,6 +179,9 @@ class CompanyRegisterSerializer(serializers.Serializer):
     first_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True, default='')
     warehouse_name = serializers.CharField(max_length=120, required=False, default='Entrepôt Principal')
+    logo_uri = serializers.CharField(required=False, allow_blank=True, default='')
+    currency = serializers.CharField(max_length=10, required=False, allow_blank=True, default='')
+    primary_color = serializers.CharField(max_length=20, required=False, allow_blank=True, default='')
 
     def validate_username(self, value):
         val = value.strip().lower()

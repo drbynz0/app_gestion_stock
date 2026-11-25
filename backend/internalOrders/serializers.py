@@ -43,6 +43,8 @@ class InternalOrderSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
+        if 'company' not in validated_data and 'request' in self.context:
+            validated_data['company'] = self.context['request'].user.company
         items_data = validated_data.pop('items')
         payments_data = validated_data.pop('payments', None)
         order = InternalOrder.objects.create(**validated_data)

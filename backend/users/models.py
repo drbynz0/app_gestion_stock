@@ -40,6 +40,7 @@ class User(AbstractUser):
     USER_TYPES = (
         ('SELLER', 'Vendeur'),
         ('ADMIN', 'Administrateur'),
+        ('PLATFORM_ADMIN', 'Super Administrateur Plateforme'),
     )
     username = models.CharField(
         max_length=150,

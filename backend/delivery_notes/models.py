@@ -7,7 +7,7 @@ class DeliveryNote(models.Model):
     date = models.DateTimeField()
     client_id = models.IntegerField(null=True, blank=True)
     client_name = models.CharField(max_length=255)
-    client_address = models.TextField()
+    client_address = models.TextField(null=True, blank=True)
     prepared_by = models.CharField(max_length=255)
     comments = models.TextField(blank=True, null=True)
     order_num = models.CharField(max_length=100)

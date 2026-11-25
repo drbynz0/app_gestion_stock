@@ -30,7 +30,7 @@ class Customer(models.Model):
     email = models.EmailField(
         _("Email"),
         max_length=100,
-        unique=True,
+        unique=False,
         db_index=True,
         null=True,
         blank=True,
@@ -38,12 +38,16 @@ class Customer(models.Model):
     
     phone_number = models.CharField(
         _("Téléphone"),
-        max_length=20,
+        max_length=30,
+        blank=True,
+        default="",
     )
     
     address = models.TextField(
         _("Adresse"),
-        max_length=200
+        max_length=200,
+        null=True,
+        blank=True,     
     )
     
     ice = models.CharField(
@@ -51,7 +55,7 @@ class Customer(models.Model):
         max_length=100,
         blank=True,
         null=True,
-        unique=True,
+        unique=False,
     )
     
     is_company = models.BooleanField(
@@ -95,7 +99,19 @@ class Customer(models.Model):
 
     @property
     def formatted_phone(self):
-        return f"+212 {self.phone_number[1:]}" if self.phone_number.startswith('0') else self.phone_number
+        if not self.phone_number:
+            return ""
+        # Si le numéro commence déjà par +, on le conserve
+        if self.phone_number.startswith('+'):
+            return self.phone_number
+        return self.phone_number
+
+    def save(self, *args, **kwargs):
+        if self.email and not self.email.strip():
+            self.email = None
+        if self.ice and not self.ice.strip():
+            self.ice = None
+        super().save(*args, **kwargs)
 
     def clean(self):
         """Validation supplémentaire"""

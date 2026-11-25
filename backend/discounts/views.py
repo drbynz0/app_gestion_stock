@@ -46,7 +46,7 @@ class DiscountViewSet(CompanyQuerysetMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         """Crée la promotion et active automatiquement on_promo sur le produit."""
-        instance = serializer.save()
+        instance = serializer.save(company=self.request.user.company)
         _sync_product_promo(
             product_id=instance.product_id,
             company=instance.company,

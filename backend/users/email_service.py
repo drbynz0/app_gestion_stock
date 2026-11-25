@@ -1,8 +1,9 @@
 import os
+import base64
 import logging
 import httpx
 from django.conf import settings
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives, send_mail
 from django.utils.html import strip_tags
 
 logger = logging.getLogger(__name__)
@@ -12,14 +13,21 @@ def _get_from_email():
     return getattr(settings, 'DEFAULT_FROM_EMAIL', None) or getattr(settings, 'EMAIL_HOST_USER', 'noreply@stockapp.com')
 
 
-def dispatch_email(recipient: str, subject: str, html_content: str, plain_content: str) -> bool:
+def dispatch_email(
+    recipient: str,
+    subject: str,
+    html_content: str,
+    plain_content: str,
+    attachments: list = None,
+) -> bool:
     """
     Envoi d'email haute fiabilité adapté aux hébergements cloud comme Render.
-    1. Si RESEND_API_KEY est défini -> API REST Resend (HTTPS port 443 - Jamais bloqué sur Render)
-    2. Si BREVO_API_KEY est défini -> API REST Brevo (HTTPS port 443 - Jamais bloqué sur Render)
+    Supporte les pièces jointes (ex: facture PDF) sur tous les canaux :
+    1. Si RESEND_API_KEY est défini -> API REST Resend (HTTPS port 443)
+    2. Si BREVO_API_KEY est défini -> API REST Brevo (HTTPS port 443)
     3. Si SENDGRID_API_KEY est défini -> API REST SendGrid (HTTPS port 443)
-    4. Sinon -> Tentative SMTP standard Django avec timeout court (5s)
-    5. Fallback -> Log sécurisé pour consultation en console Render
+    4. Sinon -> SMTP Django EmailMultiAlternatives avec pièces jointes attachées
+    5. Fallback -> Log sécurisé pour consultation en console
     """
     if not recipient:
         return False
@@ -34,7 +42,22 @@ def dispatch_email(recipient: str, subject: str, html_content: str, plain_conten
         try:
             sender = getattr(settings, 'RESEND_FROM_EMAIL', None) or os.getenv('RESEND_FROM_EMAIL') or from_email
             if 'gmail.com' in sender.lower() and not os.getenv('RESEND_FROM_EMAIL'):
-                sender = 'Gestion de Stock <onboarding@resend.dev>'
+                sender = 'Gestion de Stock <noreply@iamnizar.me>'
+
+            resend_payload = {
+                'from': sender,
+                'to': [recipient],
+                'subject': subject,
+                'html': html_content,
+                'text': plain_content,
+            }
+            if attachments:
+                resend_att = []
+                for att in attachments:
+                    raw = att['content']
+                    b64 = base64.b64encode(raw).decode('utf-8') if isinstance(raw, bytes) else str(raw)
+                    resend_att.append({'filename': att['filename'], 'content': b64})
+                resend_payload['attachments'] = resend_att
 
             resp = httpx.post(
                 'https://api.resend.com/emails',
@@ -42,99 +65,123 @@ def dispatch_email(recipient: str, subject: str, html_content: str, plain_conten
                     'Authorization': f'Bearer {resend_api_key}',
                     'Content-Type': 'application/json',
                 },
-                json={
-                    'from': sender,
-                    'to': [recipient],
-                    'subject': subject,
-                    'html': html_content,
-                    'text': plain_content,
-                },
-                timeout=10.0,
+                json=resend_payload,
+                timeout=12.0,
             )
             if resp.status_code in (200, 201):
-                logger.info(f"[Resend API] Email envoyé avec succès à {recipient}")
+                logger.info(f"[Resend API] Email envoyé avec succès à {recipient} (avec {len(attachments or [])} pièce(s) jointe(s))")
                 return True
             else:
-                logger.error(f"[Resend API] Erreur {resp.status_code}: {resp.text}")
+                logger.warning(f"[Resend API] Statut {resp.status_code} ({resp.text}). Tentative via alternative...")
         except Exception as e:
-            logger.error(f"[Resend API] Exception lors de l'envoi à {recipient}: {e}")
+            logger.warning(f"[Resend API] Exception lors de l'envoi à {recipient}: {e}")
 
     # --- 2. BREVO (Ex-Sendinblue - HTTPS Port 443) ---
     if brevo_api_key:
         try:
+            brevo_payload = {
+                'sender': {'name': 'Gestion de Stock', 'email': from_email},
+                'to': [{'email': recipient}],
+                'subject': subject,
+                'htmlContent': html_content,
+                'textContent': plain_content,
+            }
+            if attachments:
+                brevo_att = []
+                for att in attachments:
+                    raw = att['content']
+                    b64 = base64.b64encode(raw).decode('utf-8') if isinstance(raw, bytes) else str(raw)
+                    brevo_att.append({'name': att['filename'], 'content': b64})
+                brevo_payload['attachment'] = brevo_att
+
             resp = httpx.post(
                 'https://api.brevo.com/v3/smtp/email',
                 headers={
                     'api-key': brevo_api_key,
                     'Content-Type': 'application/json',
                 },
-                json={
-                    'sender': {'name': 'Gestion de Stock', 'email': from_email},
-                    'to': [{'email': recipient}],
-                    'subject': subject,
-                    'htmlContent': html_content,
-                    'textContent': plain_content,
-                },
-                timeout=10.0,
+                json=brevo_payload,
+                timeout=12.0,
             )
             if resp.status_code in (200, 201):
                 logger.info(f"[Brevo API] Email envoyé avec succès à {recipient}")
                 return True
             else:
-                logger.error(f"[Brevo API] Erreur {resp.status_code}: {resp.text}")
+                logger.warning(f"[Brevo API] Erreur {resp.status_code}: {resp.text}")
         except Exception as e:
-            logger.error(f"[Brevo API] Exception lors de l'envoi à {recipient}: {e}")
+            logger.warning(f"[Brevo API] Exception lors de l'envoi à {recipient}: {e}")
 
     # --- 3. SENDGRID (HTTPS Port 443) ---
     if sendgrid_api_key:
         try:
+            sg_payload = {
+                'personalizations': [{'to': [{'email': recipient}]}],
+                'from': {'email': from_email, 'name': 'Gestion de Stock'},
+                'subject': subject,
+                'content': [
+                    {'type': 'text/plain', 'value': plain_content},
+                    {'type': 'text/html', 'value': html_content},
+                ],
+            }
+            if attachments:
+                sg_att = []
+                for att in attachments:
+                    raw = att['content']
+                    b64 = base64.b64encode(raw).decode('utf-8') if isinstance(raw, bytes) else str(raw)
+                    sg_att.append({
+                        'filename': att['filename'],
+                        'content': b64,
+                        'type': att.get('mimetype', 'application/pdf'),
+                        'disposition': 'attachment',
+                    })
+                sg_payload['attachments'] = sg_att
+
             resp = httpx.post(
                 'https://api.sendgrid.com/v3/mail/send',
                 headers={
                     'Authorization': f'Bearer {sendgrid_api_key}',
                     'Content-Type': 'application/json',
                 },
-                json={
-                    'personalizations': [{'to': [{'email': recipient}]}],
-                    'from': {'email': from_email, 'name': 'Gestion de Stock'},
-                    'subject': subject,
-                    'content': [
-                        {'type': 'text/plain', 'value': plain_content},
-                        {'type': 'text/html', 'value': html_content},
-                    ],
-                },
-                timeout=10.0,
+                json=sg_payload,
+                timeout=12.0,
             )
             if resp.status_code in (200, 202):
                 logger.info(f"[SendGrid API] Email envoyé avec succès à {recipient}")
                 return True
             else:
-                logger.error(f"[SendGrid API] Erreur {resp.status_code}: {resp.text}")
+                logger.warning(f"[SendGrid API] Erreur {resp.status_code}: {resp.text}")
         except Exception as e:
-            logger.error(f"[SendGrid API] Exception lors de l'envoi à {recipient}: {e}")
+            logger.warning(f"[SendGrid API] Exception lors de l'envoi à {recipient}: {e}")
 
-    # --- 4. TENTATIVE SMTP DJANGO (Local ou serveur autorisant SMTP) ---
+    # --- 4. TENTATIVE SMTP DJANGO (Local ou serveur autorisant SMTP) AVEC PIÈCES JOINTES ---
     try:
-        send_mail(
+        msg = EmailMultiAlternatives(
             subject=subject,
-            message=plain_content,
+            body=plain_content,
             from_email=from_email,
-            recipient_list=[recipient],
-            html_message=html_content,
-            fail_silently=False,
+            to=[recipient],
         )
-        logger.info(f"[SMTP] Email envoyé avec succès à {recipient}")
+        msg.attach_alternative(html_content, "text/html")
+        if attachments:
+            for att in attachments:
+                raw = att['content']
+                if isinstance(raw, str):
+                    raw = base64.b64decode(raw)
+                msg.attach(att['filename'], raw, att.get('mimetype', 'application/pdf'))
+
+        msg.send(fail_silently=False)
+        logger.info(f"[SMTP] Email envoyé avec succès à {recipient} avec {len(attachments or [])} pièce(s) jointe(s)")
         return True
     except Exception as e:
         logger.warning(
-            f"[SMTP Indisponible / Bloqué] Impossible d'envoyer par SMTP à {recipient} (typique sur Render) : {e}. "
-            f"Activez RESEND_API_KEY ou BREVO_API_KEY sur Render pour un envoi HTTPS immédiat."
+            f"[SMTP Indisponible / Bloqué] Impossible d'envoyer par SMTP à {recipient} : {e}."
         )
 
-    # --- 5. LOG DE SECOURS (Permet de voir le code dans les logs Render sans bloquer) ---
+    # --- 5. LOG DE SECOURS ---
     print("\n" + "=" * 60)
     print(f"[RENDER LOG SECOURS] Email destiné à : {recipient}")
     print(f"Sujet : {subject}")
+    print(f"Pièces jointes : {[a['filename'] for a in (attachments or [])]}")
     print(f"Contenu texte :\n{plain_content}")
     print("=" * 60 + "\n")
 
@@ -324,4 +371,34 @@ def send_company_deletion_notification_email(email: str, company_name: str, admi
         subject=subject,
         html_content=html_content,
         plain_content=plain_content,
+    )
+
+
+def send_invoice_email(to_email: str, order_num: str, client_name: str, pdf_bytes: bytes, company) -> bool:
+    """Envoie la facture PDF en pièce jointe par email (Resend, Brevo, SendGrid ou SMTP avec pièce jointe)."""
+    company_name = getattr(company, 'name', 'Mon Entreprise')
+
+    subject = f"Votre facture #{order_num} – {company_name}"
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;background:#0D1117;color:#E2E8F0;padding:32px;border-radius:12px;max-width:560px;">
+      <h2 style="color:#00C97A;margin-top:0;">Facture #{order_num}</h2>
+      <p>Bonjour <strong>{client_name}</strong>,</p>
+      <p>Veuillez trouver ci-joint en fichier PDF votre facture officielle pour la commande <strong>#{order_num}</strong>.</p>
+      <p style="color:#94A3B8;font-size:13px;margin-top:24px;">Merci pour votre confiance.<br/><strong>{company_name}</strong></p>
+    </div>
+    """
+    plain_body = f"Bonjour {client_name},\n\nVeuillez trouver ci-joint votre facture #{order_num} en format PDF.\n\nMerci pour votre confiance.\n{company_name}"
+
+    attachments = [{
+        'filename': f'facture-{order_num}.pdf',
+        'content': pdf_bytes,
+        'mimetype': 'application/pdf',
+    }]
+
+    return dispatch_email(
+        recipient=to_email,
+        subject=subject,
+        html_content=html_body,
+        plain_content=plain_body,
+        attachments=attachments,
     )

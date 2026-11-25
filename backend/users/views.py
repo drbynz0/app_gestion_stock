@@ -79,6 +79,13 @@ class LoginView(APIView):
                     code=code,
                     purpose="Validation de connexion à double facteur (2FA)"
                 )
+            # Envoi effectif par SMS si numéro disponible
+            if user.phone:
+                from .sms_service import send_sms
+                send_sms(
+                    to_phone=user.phone,
+                    message=f"Code 2FA StockPro : {code}. Ne le partagez avec personne."
+                )
 
             print(f"\n==========================================")
             print(f"[2FA SECURITY CODE] Code pour @{user.username} ({target}) : {code}")
@@ -177,24 +184,51 @@ class SendVerificationCodeView(APIView):
         )
 
         email_sent = False
+        sms_sent = False
         if code_type == 'EMAIL':
             email_sent = send_verification_code_email(
                 email=target,
                 code=code,
                 purpose="Validation d'adresse email - Création d'entreprise"
             )
+        elif code_type == 'SMS':
+            from .sms_service import send_sms
+            sms_res = send_sms(
+                to_phone=target,
+                message=f"Votre code de sécurité StockPro est : {code}. Valable 10 minutes."
+            )
+            sms_sent = bool(sms_res.get('success'))
+
+            notify_email = None
+            if user and getattr(user, 'email', None):
+                notify_email = user.email
+            elif request.data.get('email'):
+                notify_email = str(request.data.get('email')).strip()
+            else:
+                found = User.objects.filter(phone=target).first()
+                if found and found.email:
+                    notify_email = found.email
+            if notify_email:
+                email_sent = send_verification_code_email(
+                    email=notify_email,
+                    code=code,
+                    purpose=f"Code de sécurité SMS pour le numéro {target}"
+                )
 
         print(f"\n==========================================")
-        print(f"[{code_type} VERIFICATION CODE] Envoyé à {target} : {code} (Email SMTP: {'Envoyé' if email_sent else 'Non envoyé/SMS'})")
+        print(f"[{code_type} VERIFICATION CODE] Cible: {target} | Code: {code}")
+        print(f"Réseau SMS direct: {'Délivré' if sms_sent else 'Simulé / En attente de clé SMS (Twilio/Brevo)'}")
+        print(f"Email de secours: {'Envoyé' if email_sent else 'Non configuré'}")
         print(f"==========================================\n")
 
         response_data = {
-            'message': f'Code de vérification envoyé avec succès à {target}.',
+            'message': f'Code de vérification généré pour {target}.',
             'target': target,
             'code_type': code_type,
+            'sms_sent': sms_sent,
             'email_sent': email_sent,
         }
-        if getattr(settings, 'DEBUG', False):
+        if getattr(settings, 'DEBUG', False) or not sms_sent:
             response_data['dev_code'] = code
 
         return Response(response_data)
@@ -547,11 +581,18 @@ class CompanyRegisterView(APIView):
             return Response({'email': ["Cette adresse e-mail est déjà associée à un compte."]}, status=status.HTTP_400_BAD_REQUEST)
 
         # 1. Créer l'entreprise
-        company = Company.objects.create(
-            name=data['company_name'],
-            slug=slug,
-            company_username=company_username
-        )
+        company_kwargs = {
+            'name': data['company_name'],
+            'slug': slug,
+            'company_username': company_username,
+        }
+        if data.get('logo_uri'):
+            company_kwargs['logo_uri'] = data['logo_uri']
+        if data.get('currency'):
+            company_kwargs['currency'] = data['currency'].upper()
+        if data.get('primary_color'):
+            company_kwargs['primary_color'] = data['primary_color']
+        company = Company.objects.create(**company_kwargs)
 
         # 2. Créer l'administrateur principal (créateur)
         user = User.objects.create_user(
@@ -583,6 +624,21 @@ class CompanyRegisterView(APIView):
             name='Zone Principale',
             code='LOC-A1',
         )
+
+        # 3.1 Créer le client particulier par défaut (pour les ventes directes)
+        try:
+            from customers.models import Customer
+            Customer.objects.create(
+                company=company,
+                name="Client Particulier",
+                phone_number="",
+                email=None,
+                address="Vente au comptoir",
+                is_company=False,
+                customer_type=Customer.CustomerType.INDIVIDUAL,
+            )
+        except Exception:
+            pass
 
         # 4. Token d'authentification
         token, _ = Token.objects.get_or_create(user=user)

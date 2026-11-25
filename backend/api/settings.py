@@ -43,11 +43,11 @@ EMAIL_USE_TLS = True
 EMAIL_TIMEOUT = 5  # Timeout court pour éviter que Render ne freeze si les ports SMTP sont bloqués
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or os.getenv('EMAIL_HOST_USER') or 'Gestion de Stock <noreply@gestiondestock.com>'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or 'Gestion de Stock <noreply@iamnizar.me>'
 
 # Clés API pour envoi HTTP (Port 443 HTTPS - Indispensable pour Render)
 RESEND_API_KEY = os.getenv('RESEND_API_KEY')
-RESEND_FROM_EMAIL = os.getenv('RESEND_FROM_EMAIL', 'Gestion de Stock <onboarding@resend.dev>')
+RESEND_FROM_EMAIL = os.getenv('RESEND_FROM_EMAIL', 'Gestion de Stock <noreply@iamnizar.me>')
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
 
@@ -101,7 +101,6 @@ REST_FRAMEWORK = {
 
 
 MIDDLEWARE = [
-    'django.middleware.csrf.CsrfViewMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -231,6 +230,10 @@ STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Limite de taille des requêtes (augmentée pour accepter les logos en base64)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024   # 25 Mo
+FILE_UPLOAD_MAX_MEMORY_SIZE = 25 * 1024 * 1024   # 25 Mo
 
 from django.conf import settings # type: ignore
 from django.conf.urls.static import static # type: ignore
