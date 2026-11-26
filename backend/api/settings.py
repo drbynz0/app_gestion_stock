@@ -81,6 +81,7 @@ INSTALLED_APPS = [
     'reset_password',
     'assistant',
     'stock',
+    'watched',
 ]
 
 REST_FRAMEWORK = {

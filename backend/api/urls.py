@@ -45,6 +45,7 @@ urlpatterns = [
     path('api/', include('reset_password.urls')),
     path('api/', include('assistant.urls')),
     path('api/stock/', include('stock.urls')),
+    path('api/', include('watched.urls')),
 ]
 
 if settings.DEBUG:
