@@ -126,6 +126,7 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=[
+    'app-gestion-stock-hqge.onrender.com',
     'comparable-arlee-drbynz-e68d4d38.koyeb.app',
     'appstock-production.up.railway.app',
     'b8d6-196-206-9-241.ngrok-free.app',
